@@ -18,7 +18,7 @@ inference functions return a torch tensor that could be a scalar
     inference functions are assumed to be run with torch.no_grad
 '''
 
-def get_UD_currents(s, w, traj_generator):
+def get_UD_currents(s, w, traj_generator, vjs_multiplier = 2):
     params = traj_generator.params
     #trims off the time vector, if there was one 
     if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
@@ -38,20 +38,28 @@ def get_UD_currents(s, w, traj_generator):
         factor = .75
     J = params['gamma']*w1*dx-factor*dw*dp
     #J = model.params['gamma']*w1*dx-.75*dw*dp
-    VJS = 2*np.sqrt(params['gamma']*params['kBT'])*w1**2*params['Dt']
+    VJS = vjs_multiplier*np.sqrt(params['gamma']*params['kBT'])*w1**2*params['Dt']
     if n_steps > 1:
             J = J.sum(axis=1)
             VJS = VJS.sum(axis=1)
 
     return J.mean(axis=0), VJS.mean(axis=0)
 
-def entropy_loss(s, w, traj_generator): 
+def entropy_loss_TUR(s, w, traj_generator): 
     J, VJS = get_UD_currents(s, w, traj_generator)
     return torch.sum( VJS/len(VJS) - J)
 
-def entropy_infer(s, w, traj_generator):
+def entropy_infer_TUR(s, w, traj_generator):
     J, VJS = get_UD_currents(s, w, traj_generator)
     return 2*torch.sum(J**2/VJS).squeeze()
+
+def entropy_loss_ML(s, w, traj_generator): 
+    J, VJS = get_UD_currents(s, w, traj_generator, vjs_multiplier = .5)
+    return torch.sum( VJS/len(VJS) - J)
+
+def entropy_infer_ML(s, w, traj_generator):
+    J, VJS = get_UD_currents(s, w, traj_generator, vjs_multiplier=.5)
+    return traj_generator.params['Dt']*torch.mean(w**2)
 
 def force_loss(s, w, traj_generator):
     params = traj_generator.params
@@ -76,3 +84,13 @@ def force_loss(s, w, traj_generator):
 
 def force_infer(s, w, traj_generator):
     return w
+
+
+def tut_loss(s, Q, traj_generator):
+    return (Q**2).mean() - Q.mean()
+
+def tut_infer(s, Q, traj_generator):
+                return torch.log( ((Q**2).mean() + Q.mean()*Q) / ((Q**2).mean() - Q.mean()*Q) )
+
+
+
