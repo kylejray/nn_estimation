@@ -58,3 +58,25 @@ def fully_connected_linear(n_input, n_output, n_hidden, num_inner):
     layers[::2] = linear_layers
     layers[1::2] = relu_layers
     return nn.Sequential(*layers)
+
+class TimeOddCurrent(FullTrajectory):
+    '''
+    return a time odd function of a full trajectory
+    1D only right now
+    '''
+
+    def __init__(self, options):
+        super().__init__(options)
+    
+    def one_pass(self, s):
+        h0 = self.h0(s).squeeze()
+        return self.h1(h0)
+        
+    def forward(self, s):
+        s_rev = torch.fliplr(s)
+        s_rev[...,1] *= -1
+        return self.one_pass(s) - self.one_pass(s_rev)
+
+
+
+

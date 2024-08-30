@@ -87,7 +87,7 @@ def force_infer(s, w, traj_generator):
 
 
 def tut_loss(s, Q, traj_generator):
-    return (Q**2).mean() - Q.mean()
+    return ( (Q-Q.mean())**2 ).mean() + 500*torch.abs(1-Q.mean())
 
 def tut_infer(s, Q, traj_generator):
                 return torch.log( ((Q**2).mean() + Q.mean()*Q) / ((Q**2).mean() - Q.mean()*Q) )
