@@ -23,12 +23,20 @@ def get_UD_currents(s, w, traj_generator, vjs_multiplier = 2):
     #trims off the time vector, if there was one 
     if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
         s = s[...,:-1]
+    
+    w_len = w.shape[1]
+    s_len = s.shape[1]
+    n_steps = min(w_len, s_len) - 1
+
     n_dim = int(s.shape[-1]/2)
-    n_steps = s.shape[1] - 1
+
+    s = s[:,:n_steps+1]
+    w = w[:,:n_steps+1]
 
     assert n_steps > 0, 'must have at least 1 time step'
-    
+
     w1 = w[:,:-1,]
+ 
     ds, dw = s.diff(axis=1), w.diff(axis=1)
     dx = ds[...,:n_dim]
     dp = ds[...,n_dim:]
@@ -87,7 +95,7 @@ def force_infer(s, w, traj_generator):
 
 
 def tut_loss(s, Q, traj_generator):
-    return ( (Q-Q.mean())**2 ).mean() + 500*torch.abs(1-Q.mean())
+    return (Q**2).mean() + 1000*torch.abs(1-Q.mean())
 
 def tut_infer(s, Q, traj_generator):
                 return torch.log( ((Q**2).mean() + Q.mean()*Q) / ((Q**2).mean() - Q.mean()*Q) )

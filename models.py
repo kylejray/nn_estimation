@@ -6,9 +6,9 @@ from torch import nn
 # simple network for rate based estimation
 # also serves as an example for making new models
 class SingleTimeStep(ModelBuilder):
-    def __init__(self, options):
+    def __init__(self, options = None):
         default_options = {'n_input':2, 'n_output':1, 'n_hidden':512, 'num_inner':2}
-        super().__init__(options, default_options)
+        super().__init__(default_options, options)
 
     def generate_network(self):
         opt = self.options
@@ -23,9 +23,9 @@ class SingleTimeStep(ModelBuilder):
 # here is using two linear networks to also collapse all trajectories to one number
 # potentially for testing the TUT or the oneshot method
 class FullTrajectory(ModelBuilder):
-    def __init__(self, options):
+    def __init__(self, options = None):
         default_options = {'n_input':2, 'n_output':1, 'n_hidden':512, 'num_inner':2, 'traj_length':10}
-        super().__init__(options, default_options)
+        super().__init__(default_options, options)
     
     def generate_network(self):
         opt = self.options

@@ -2,14 +2,17 @@ import torch
 from torch import nn
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from argparse import Namespace
 
 class ModelBuilder(nn.Module):
     '''
     abstract class that lays out the framework for defining new models
     '''
-    def __init__(self, options, default_options):
+    def __init__(self, default_options, options=None):
         super().__init__()
         self.default_options = default_options
+        if options is None:
+            options = Namespace()
         self.options = options
         self.verify_options()
         self.generate_network()
@@ -54,7 +57,7 @@ class ModelTrainer:
     it brings together a TrajectoryGenerator and a nn.Model instance
     and trains/infers from simulated trajectories
     '''
-    def __init__(self, model, traj_generator, optimizer, loss_function, inference, training_options):
+    def __init__(self, model, traj_generator, optimizer, loss_function, inference, training_options=None):
         '''
         model is nn.module network
         traj_generator is defined in experiments.py
@@ -81,13 +84,16 @@ class ModelTrainer:
         option_keys = ['wd','lr','n_epoch','epoch_s','n_iter','iter_s', 'n_infer', 'infer_s']
         option_vals = [1E-5, 1E-4, 10, 5_000, 10, 2_000, 1, 5_000]
         self.default_options = {k:v for k,v in zip(option_keys,option_vals)}
+        if training_options == None:
+            training_options = Namespace()
         self.training_options = training_options
         self.verify_options()
         self.loss_function = loss_function
         self.inference = inference
-        self.optimizer = optimizer(model.parameters(),training_options.lr, weight_decay = training_options.wd)
+        self.optimizer = optimizer(model.parameters(),self.training_options.lr, weight_decay = self.training_options.wd)
         self.all_loss = []
         self.epoch_avg_loss = []
+        self.minibatch_replacement = True
 
     def train(self, plot=False):
 
