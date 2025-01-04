@@ -8,7 +8,7 @@ class ModelBuilder(nn.Module):
     '''
     abstract class that lays out the framework for defining new models
     '''
-    def __init__(self, default_options, options=None):
+    def __init__(self, default_options: dict[str, int], options: any = None):
         super().__init__()
         self.default_options = default_options
         if options is None:
@@ -44,7 +44,7 @@ class ModelBuilder(nn.Module):
         '''
         return 
 
-    def forward(self, input):
+    def forward(self, input: torch.tensor) -> torch.tensor:
         '''
         normal forward method, should be designed in conjunction with generate_network
         '''
@@ -93,6 +93,7 @@ class ModelTrainer:
         self.optimizer = optimizer(model.parameters(),self.training_options.lr, weight_decay = self.training_options.wd)
         self.all_loss = []
         self.epoch_avg_loss = []
+        self.epoch_validation_loss = []
         self.minibatch_replacement = True
 
     def train(self, plot=False):
@@ -103,6 +104,8 @@ class ModelTrainer:
 
             self.all_loss.extend(epoch_loss)
             self.epoch_avg_loss.append( (sum(epoch_loss)/len(epoch_loss)) )
+            if hasattr(self, 'validation_data'):
+                self.epoch_validation_loss.append(self.validation_loss())
         
         if plot:
             self.plot_training_loss()
@@ -111,8 +114,21 @@ class ModelTrainer:
     
     def training_epoch(self, traj_batch):
         loss = []
+
+        start_idx = 0
         for _ in range(self.training_options.n_iter):
-            idx = torch.randperm(traj_batch.shape[0])[:self.training_options.iter_s]
+            if self.minibatch_replacement:
+                idx = torch.randperm(traj_batch.shape[0])[:self.training_options.iter_s]
+            else:
+                end_idx = start_idx+self.training_options.iter_s
+
+                if end_idx >= traj_batch.shape[0]:
+                    counter = 0
+                    traj_batch = traj_batch[torch.randperm(traj_batch.shape[0])]
+                    end_idx = counter+self.training_options.iter_s
+
+                idx = range(start_idx,end_idx)
+
             loss.append( self.training_step(traj_batch[idx]) )
         return loss
 
@@ -125,6 +141,11 @@ class ModelTrainer:
         loss.backward()
         self.optimizer.step()
 
+        return loss.item()
+    
+    def validation_loss(self):
+        self.model.eval()
+        loss = self.loss_function(self.validation_data, self.model(self.validation_data), self.traj_generator)
         return loss.item()
     
     def plot_training_loss(self, ax = None):
@@ -151,19 +172,27 @@ class ModelTrainer:
             plt.show()
             return 
     
-    def infer(self, return_trajectories = False):
+
+    def infer(self, trajectories=None, return_trajectories=False):
         self.model.eval()
         out = []
-        if return_trajectories:
-            test_traj = []
-        for _ in range(self.training_options.n_infer):
-            trajectories = self.traj_generator.batch(self.training_options.infer_s)
-            with torch.no_grad():
-                value = self.inference(trajectories, self.model(trajectories), self.traj_generator)
-            out.append( value )
+
+        if trajectories is None:
             if return_trajectories:
-                test_traj.append(trajectories)
+                test_traj = []
+            for _ in range(self.training_options.n_infer):
+                trajectories = self.traj_generator.batch(self.training_options.infer_s)
+                with torch.no_grad():
+                    value = self.inference(trajectories, self.model(trajectories), self.traj_generator)
+                out.append( value )
+                if return_trajectories:
+                    test_traj.append(trajectories)
+        else:
         
+           value = self.inference(trajectories, self.model(trajectories), self.traj_generator) 
+           out.append(value)
+           test_traj = trajectories
+
         if return_trajectories:
             return out, test_traj
         return out
@@ -204,8 +233,29 @@ class TrajectoryGenerator:
         self.include_time = False
         self.infer_velocity = False
         self.position_only = False
+
+        # if infinite data is false, it will keep giving the same data set when asked for 'batch'
+        self.infinite_data = True
     
     def batch(self, N):
+        if self.infinite_data:
+            return self.generate_batch(N)
+
+        else:
+            if not hasattr(self,'data'):
+                self.data = self.generate_batch(N)
+            else:
+                data_length = self.data.shape[0]
+                if data_length >= N:
+                    return self.data[:N]
+                else:
+                    new_data = self.generate_batch(N-data_length)
+                    self.data = torch.cat([self.data,new_data], dim=0)
+
+            return self.data
+
+
+    def generate_batch(self, N):
         trajectories = torch.from_numpy( self.get_traj(N, self.params) )
         self.params['Dt'] = self.params['dt'] * self.params['coarse']
         if self.infer_velocity:
