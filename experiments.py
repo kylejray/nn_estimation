@@ -101,4 +101,88 @@ def tut_infer(s, Q, traj_generator):
                 return torch.log( ((Q**2).mean() + Q.mean()*Q) / ((Q**2).mean() - Q.mean()*Q) )
 
 
+def od_force_loss(s, w, traj_generator):
+    '''
+    
+    s : trajectories tensors with dims [N_traj , steps , coords_values = (x1,x2,..,xn) ]
+    w : weights function with dims [N_traj , steps , coords_values = (w1,w2,..,wn) ]
+    
+    '''
+    params = traj_generator.params
+    #trims off the time vector, if there was one 
+    #if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
+    #    s = s[...,:-1]
+    
+    #n_dim = int(s.shape[-1])
+    n_steps = s.shape[1] - 1
 
+    #we dont really care about time-averaged force; so this makes sure it's only for one time step
+    assert n_steps == 1, 'trajs must have exactly 1 time step'
+
+    dx = s.diff(axis=1)  ##[...,n_dim:] why this? no need for overdamped
+    w1 = w[:,:-1,:]
+    ### axis=2 is the inner product
+    loss = -((dx*w1).sum(axis=2)).mean(axis=0) + ((.5*(w1**2).sum(axis=2))*params['Dt']).mean(axis=0)
+    return loss ### instead of loss mean?
+
+def get_od_currents(s, w, traj_generator):
+    params = traj_generator.params
+    #trims off the time vector, if there was one 
+    #if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
+    #    s = s[...,:-1]
+    
+    w_len = w.shape[1]
+    s_len = s.shape[1]
+    n_steps = min(w_len, s_len) - 1
+
+    s = s[:,:n_steps+1]
+    w = w[:,:n_steps+1]
+
+    assert n_steps > 0, 'must have at least 1 time step'
+
+    w1 = w[:,:-1,:]
+    w2 = w[:,1:,:]
+    w_avg = (w1+w2)/2
+ 
+    ds = s.diff(axis=1)
+    J = (w_avg * ds).sum(axis=2)
+    VJS = (1/2*w1**2*params['Dt']).sum(axis=2) #inner production 
+    
+    if n_steps > 1:
+            J = J.sum(axis=1)
+            VJS = VJS.sum(axis=1)
+
+    return J.mean(axis=0), VJS.mean(axis=0)
+
+def od_dtlogf_loss(s, w, traj_generator):
+    '''
+    
+    s : trajectories tensors with dims [N_traj , steps , coords_values = (x1,x2,..,xn) ]
+    w : weights function with dims [N_traj , steps , w ]
+    this loss gives the score function dtlogf
+    
+    '''
+    params = traj_generator.params
+    #trims off the time vector, if there was one 
+    #if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
+    #    s = s[...,:-1]
+    
+    #n_dim = int(s.shape[-1])
+    n_steps = s.shape[1] - 1
+
+    #we dont really care about time-averaged dtlogf; so this makes sure it's only for one time step
+    assert n_steps == 1, 'trajs must have exactly 1 time step'
+
+    #dx = s.diff(axis=1)  ##[...,n_dim:] why this? no need for overdamped
+    w1 = w[:,:-1,:]
+    dw = w.diff(axis=1)
+
+    loss = -dw.mean(axis=0) + (.5*w1**2*params['Dt']).mean(axis=0)
+    return loss
+
+def od_entropy_loss_ML(s, w, traj_generator): 
+    J, VJS = get_od_currents(s, w, traj_generator)
+    return (VJS - J)
+
+def od_entropy_infer_ML(s, w, traj_generator):
+    return traj_generator.params['Dt']*torch.mean(w**2)

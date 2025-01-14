@@ -81,8 +81,8 @@ class ModelTrainer:
         self.model = model
         self.traj_generator = traj_generator
         self.physical_params = traj_generator.params
-        option_keys = ['wd','lr','n_epoch','epoch_s','n_iter','iter_s', 'n_infer', 'infer_s']
-        option_vals = [1E-5, 1E-4, 10, 5_000, 10, 2_000, 1, 5_000]
+        option_keys = ['wd','lr','n_epoch','epoch_s','n_iter','iter_s', 'patience', 'min_delta', 'n_infer', 'infer_s']
+        option_vals = [1E-5, 1E-4, 10, 5_000, 10, 2_000, 10, 0., 1, 5_000]
         self.default_options = {k:v for k,v in zip(option_keys,option_vals)}
         if training_options == None:
             training_options = Namespace()
@@ -94,7 +94,19 @@ class ModelTrainer:
         self.all_loss = []
         self.epoch_avg_loss = []
         self.epoch_validation_loss = []
+        self.earlystop_counter = 0
+        self.min_validation_loss = float('inf')
         self.minibatch_replacement = True
+
+    def earlystop(self, validation_loss):
+        if validation_loss[-1] < self.min_validation_loss:
+            self.min_validation_loss = validation_loss[-1]
+            self.earlystop_counter = 0
+        elif validation_loss[-1] > (self.min_validation_loss + self.training_options.min_delta):
+            self.earlystop_counter += 1
+            if self.earlystop_counter >= self.training_options.patience:
+                return True
+        return False
 
     def train(self, plot=False):
 
@@ -105,8 +117,9 @@ class ModelTrainer:
             self.all_loss.extend(epoch_loss)
             self.epoch_avg_loss.append( (sum(epoch_loss)/len(epoch_loss)) )
             if hasattr(self, 'validation_data'):
-                self.epoch_validation_loss.append(self.validation_loss())
-        
+                self.epoch_validation_loss.append(self.validation_loss()/ (self.validation_data).shape[0])
+                if self.earlystop(self.epoch_validation_loss):             
+                    break
         if plot:
             self.plot_training_loss()
 
