@@ -3,7 +3,7 @@ import torch
 
 
 keys = ['dt', 'num_steps', 'init', 'kBT', 'mob', 'k', 'coarse']
-vals = [.01, 100, np.array([0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]), [1, 2], 1, 1, 1 ]
+vals = [.01, 50, np.array([0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]), [1, 2], 1, 1, 1 ]
 
 params = { k:v for k,v in zip(keys, vals)}
 """
@@ -24,6 +24,9 @@ def simulate_five_spring_overdamped(N, all_params):
     noise_cov = np.diag(2*diff_const*dt)
     steps = all_params['num_steps']
     num_paths = N
+    save_skip = all_params['coarse']
+    save_indices = range(0,steps)[::save_skip]
+
 
 # cov_matrix
     mat_sigma = np.zeros((5, 5))
@@ -45,7 +48,7 @@ def simulate_five_spring_overdamped(N, all_params):
     for time in range(1, steps):
         phase_data[:,time,:] = phase_data[:,time-1,:] + np.einsum('ij,jk->ik', phase_data[:,time-1,:],A)*dt + np.random.multivariate_normal(zero_mean, noise_cov, size=num_paths)
 
-    return phase_data
+    return phase_data[:,save_indices,:]
 
 # define the class which can return related values.
 class five_beads:
@@ -87,6 +90,7 @@ class five_beads:
         self.bath_sigma2 = bath_sigma2
         self.D_mat = np.diag(1/2*bath_sigma2)
         self.D_inv = np.linalg.inv(np.diag(1/2*bath_sigma2))
+        self.bath_sigma2_mat = np.diag(bath_sigma2)
     
     # The EoM is dz/dt= cov_evo@z + sigma2
 
@@ -139,6 +143,10 @@ class five_beads:
     def u(self,x,t):
         u_mat=(self.A+self.D_mat@self.time_covmatrix_inv(t))
         return x@(u_mat).T
+    
+    # Compute dxlogf(x,t)
+    def dxlogf(self,x,t):
+        return -x @ self.time_covmatrix_inv(t)
     
     # Compute the probability distribution at time t given the position x
     def prob(self,x,t):

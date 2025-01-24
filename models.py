@@ -19,6 +19,21 @@ class SingleTimeStep(ModelBuilder):
 
     def forward(self, s):
         return self.h(s)
+    
+class SingleTimeStep_Tanh(ModelBuilder):
+    def __init__(self, options = None):
+        default_options = {'n_input':2, 'n_output':1, 'n_hidden':512, 'num_inner':2}
+        super().__init__(default_options, options)
+
+    def generate_network(self):
+        opt = self.options
+        self.h = fully_connected_linear_tanh(
+            opt.n_input, opt.n_output, opt.n_hidden, opt.num_inner,
+            )
+        return 
+    
+    def forward(self, s):
+        return self.h(s)
 
 # here is using two linear networks to also collapse all trajectories to one number
 # potentially for testing the TUT or the oneshot method
@@ -57,6 +72,20 @@ def fully_connected_linear(n_input, n_output, n_hidden, num_inner):
     layers = [None]*(2*len(linear_layers)-1)
     layers[::2] = linear_layers
     layers[1::2] = relu_layers
+    return nn.Sequential(*layers)
+
+def fully_connected_linear_tanh(n_input, n_output, n_hidden, num_inner):
+    '''
+    helper function to make fully connected linear/relu layers
+    '''
+    linear_layers = [nn.Linear(n_input, n_hidden),
+                    *[nn.Linear(n_hidden, n_hidden) for i in range(num_inner)],
+                    nn.Linear(n_hidden, n_output),
+                    ]
+    tanh_layers = [nn.Tanh() for i in range(len(linear_layers)-1)]
+    layers = [None]*(2*len(linear_layers)-1)
+    layers[::2] = linear_layers
+    layers[1::2] = tanh_layers
     return nn.Sequential(*layers)
 
 class TimeOddCurrent(FullTrajectory):
