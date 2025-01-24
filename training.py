@@ -80,6 +80,8 @@ class ModelTrainer:
         '''
         self.model = model
         self.traj_generator = traj_generator
+        self.model.to(self.traj_generator.device)
+
         self.physical_params = traj_generator.params
         option_keys = ['wd','lr','n_epoch','epoch_s','n_iter','iter_s', 'patience', 'min_delta', 'n_infer', 'infer_s']
         option_vals = [1E-5, 1E-4, 10, 5_000, 10, 2_000, 10, 0., 1, 5_000]
@@ -226,7 +228,7 @@ class ModelTrainer:
 
 
 class TrajectoryGenerator:
-    def __init__(self, get_traj, params):
+    def __init__(self, get_traj, params, device=None):
         '''
         this class is basically an interface from a simulation to the model
         
@@ -242,7 +244,8 @@ class TrajectoryGenerator:
         '''
         self.get_traj = get_traj
         self.params = params
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
+        if device == None:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu') 
         self.include_time = False
         self.infer_velocity = False
         self.position_only = False
@@ -277,7 +280,7 @@ class TrajectoryGenerator:
             trajectories = self.add_time_vector(trajectories)
         if self.position_only:
             trajectories = trajectories[...,0]
-        return trajectories.to(self.device).float()
+        return trajectories.float().to(self.device)
 
     def estimate_velocity(self, trajs):
         trajs[:,:-1,1] = trajs[...,0].diff(axis=1)/self.params['Dt']
