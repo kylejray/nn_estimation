@@ -257,12 +257,13 @@ class five_beads:
         path_ent = torch.zeros((len(data),step_end-step_begin))
         with torch.no_grad():
             for step in range(step_begin, step_end):
-        # x, nextx and delta x
+                
+        # x, nextx and delta x                
                 data_current = data[:,step,:]
                 data_next = data[:,step+1,:]
-                dx = data_next - data_current
+                dx = data_next - data_current                
                 u_average = (u[step](data_current) + u[step](data_next))/2
-                udx_over_D =  torch.matmul(u_average*dx, torch.from_numpy(self.D_inverse()).float())
+                udx_over_D =  torch.matmul(u_average*dx, torch.from_numpy(self.D_inverse()).float().to(data.device))
                 dtlogf = (-1*dlogf[step](data_current)*params['dt']).flatten()
                 udx = torch.sum(udx_over_D,axis=-1)
                 path_ent[:,step]= dtlogf + udx

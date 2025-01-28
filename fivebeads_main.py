@@ -121,8 +121,9 @@ step_begin, step_end=0, params['num_steps']-1
 #diss_path = theo_model.path_diss_path_theo(total_data_validate.cpu().numpy(), step_begin, step_end)
 #diss_path_nn = theo_model.path_diss_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, total_data_validate, step_begin, step_end)
 diss_path_step = theo_model.path_diss_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, total_data_validate, step_begin, step_end)
-nn_cumsum_diss=diss_path_step.cumsum(axis=1)
+nn_cumsum_diss = diss_path_step.cumsum(axis=1)
 nn_cumsum_diss_cpu = nn_cumsum_diss.cpu().numpy()
+
 theo_cumsum_diss = theo_model.path_diss_path_theo_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
  
 
@@ -153,6 +154,8 @@ timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
 directory = f'results_{timestamp}'
 os.makedirs(directory, exist_ok=True)
 
+model_directory = directory + '/models'
+os.makedirs(model_directory, exist_ok=True)
 
 filename = f"loss.json"
 file_path = os.path.join(directory, filename)
@@ -165,10 +168,10 @@ with open(file_path, 'w') as file:
     json.dump(parameters, file, indent=4)
 
 for idx, model_u in enumerate(WeightFunction_u_multisteps):
-    torch.save(model_u.state_dict(), f'{directory}/model_u_{idx}.pth')
+    torch.save(model_u.state_dict(), f'{model_directory}/model_u_{idx}.pth')
 
 for idx, model_dtlogf in enumerate(WeightFunction_dtlogf_multisteps):
-    torch.save(model_dtlogf.state_dict(), f'{directory}/model_dtlogf_{idx}.pth')
+    torch.save(model_dtlogf.state_dict(), f'{model_directory}/model_dtlogf_{idx}.pth')
 
 file_path = os.path.join(directory, "nn_cumsum_diss.npy")
 np.save(file_path, nn_cumsum_diss_cpu)
