@@ -168,6 +168,9 @@ class five_beads:
     def dtlogf(self, x, t):
         dt = 1e-6
         return (np.log(self.prob(x, t+dt)) - np.log(self.prob(x, t-dt)))/(2*dt)
+    
+
+
     ################Ent part##########
     def path_heat_theo(self, data, step_begin, step_end):
     # extract the data needed
@@ -235,8 +238,11 @@ class five_beads:
             diss_path[:,step] = (-1*self.dtlogf(data_current, step*params['dt'])*params['dt']).flatten() + np.sum(udx_over_D,axis=-1)
             diss = np.cumsum(diss_path, axis=1)
         return diss
+    
+    #def path_diss_path_defi_theo_cum(self, data, step_begin, step_end):
 
-    def path_diss_nn(self, u, dlogf, data, step_begin, step_end):
+
+    def path_diss_nn(self, u, dlogf, data, params, step_begin, step_end):
     # compute dissipation from path defintion \int dx-dtlogfdt
         path_ent = torch.zeros((len(data),1))
         with torch.no_grad():
@@ -247,12 +253,12 @@ class five_beads:
                 dx = data_next - data_current
                 u_average = (u[step](data_current) + u[step](data_next))/2
                 udx_over_D =  torch.matmul(u_average*dx, torch.from_numpy(self.D_inverse()).float())
-                dtlogf = -1*dlogf[step](data_current).reshape(-1,1)*params['dt']
+                dtlogf = -1*dlogf[step](data_current).reshape(-1,1)*params['Dt']
                 udx = torch.sum(udx_over_D,axis=-1).reshape(-1,1)
                 path_ent += dtlogf + udx
         return path_ent
     
-    def path_diss_step_nn(self, u, dlogf, data, step_begin, step_end):
+    def path_diss_step_nn(self, u, dlogf, data, params, step_begin, step_end):
     # compute cumulant dissipation
         path_ent = torch.zeros((len(data),step_end-step_begin))
         with torch.no_grad():
@@ -264,7 +270,7 @@ class five_beads:
                 dx = data_next - data_current                
                 u_average = (u[step](data_current) + u[step](data_next))/2
                 udx_over_D =  torch.matmul(u_average*dx, torch.from_numpy(self.D_inverse()).float().to(data.device))
-                dtlogf = (-1*dlogf[step](data_current)*params['dt']).flatten()
+                dtlogf = (-1*dlogf[step](data_current)*params['Dt']).flatten()
                 udx = torch.sum(udx_over_D,axis=-1)
                 path_ent[:,step]= dtlogf + udx
         return path_ent
