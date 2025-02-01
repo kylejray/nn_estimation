@@ -77,6 +77,7 @@ total_data_validate= TrajectoryGenerator(simulate_five_spring_overdamped, params
 # convert numpy array to list for json serialization
 params['init'] = params['init'].tolist()
 timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
+
 # compute the theoretical cumsum of ep
 theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
 step_begin,step_end = 0, params['num_steps']-1
@@ -115,7 +116,7 @@ def multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps
             WeightFunction_u_multisteps[step+1].load_state_dict(WeightFunction_u_multisteps[step].state_dict())
             WeightFunction_dtlogf_multisteps[step+1].load_state_dict(WeightFunction_dtlogf_multisteps[step].state_dict())
 
-def data_save(timestamp, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, training_options, cg_num_steps, coarse_step):
+def data_save(directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, training_options, cg_num_steps, coarse_step):
     # Save data
     parameters = {
         **params,
@@ -136,9 +137,7 @@ def data_save(timestamp, params, u_multisteps, dtlogf_multisteps, WeightFunction
         dtlogf_validation_loss.append(dtlogf_multisteps[step].epoch_validation_loss)
 
     data={'u_training_loss':u_training_loss, 'dtlogf_training_loss':dtlogf_training_loss, 'u_validation_loss':u_validation_loss, 'dtlogf_validation_loss':dtlogf_validation_loss}
-    directory = f'results_{timestamp}'
     
-
     coarse_directory= directory + f'/coarse_{coarse_step}'
     model_directory = coarse_directory + '/models'
     os.makedirs(model_directory, exist_ok=True)
@@ -180,10 +179,11 @@ for coarse_step in params["coarse_steps"]:
     # Compute entropy production per trajectory and save
     cg_step_begin = 0
     cg_step_end = cg_num_steps-1
+
     nn_diss_path_step = theo_model.path_diss_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
     nn_path_diss_cum = nn_diss_path_step.cumsum(axis=1)
     nn_path_diss_cum_cpu = nn_path_diss_cum.cpu().numpy()
     cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum_coarse_{coarse_step}.npy')
     np.save(cg_ep_file_path, nn_path_diss_cum_cpu)
     # Save data
-    data_save(timestamp, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, training_options, cg_num_steps, coarse_step)
+    data_save(directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, training_options, cg_num_steps, coarse_step)
