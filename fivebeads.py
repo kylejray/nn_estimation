@@ -239,7 +239,31 @@ class five_beads:
             diss = np.cumsum(diss_path, axis=1)
         return diss
     
-    #def path_diss_path_defi_theo_cum(self, data, step_begin, step_end):
+    def diss_path_theo_defi_cum(self, data, step_begin, step_end):
+    # Create array to store the logf from step_begin to step_end
+        logf = np.zeros((len(data),step_end-step_begin+1))
+    # Compute the logf from step_begin to step_end
+        for step in range(step_begin, step_end+1):
+            logf[:,step] = self.logf(data[:,step,:], step*params['dt']).ravel()
+    # Compute the change in logf from step_begin to step_end called dlogf
+        dlogf = logf - logf[:,0].reshape(-1,1)
+    # Remove the dlogf at step_begin which is 0
+        dlogf = dlogf[:,1:]
+    ##### Heat part #####
+        data = data[:,step_begin:step_end+1,:]
+        force = np.einsum('ijk,kl->ijl', data, self.A)
+        force_adv=force[:,:-1,:]
+        force_next=force[:,1:,:]
+        force_avg = (force_adv + force_next)/2
+    # compute the F/D  
+        foverD = np.einsum('ijk,kl->ijl', force_avg, self.D_inverse())
+    # dx part
+        dx= np.diff(data, axis=1)
+    # heat: the definition of the heat is F/D circ dx
+        heat_step = np.einsum('ijk,ijk->ij',foverD,dx)
+        heat = np.cumsum(heat_step, axis=1)
+        diss = heat - dlogf
+        return diss
 
 
     def path_diss_nn(self, u, dlogf, data, params, step_begin, step_end):
@@ -274,4 +298,30 @@ class five_beads:
                 udx = torch.sum(udx_over_D,axis=-1)
                 path_ent[:,step]= dtlogf + udx
         return path_ent
-        
+
+    def path_udx_step_nn(self, u, dlogf, data, params, step_begin, step_end):
+    # compute cumulant dissipation
+        path_ent = torch.zeros((len(data),step_end-step_begin))
+        with torch.no_grad():
+            for step in range(step_begin, step_end):
+                # x, nextx and delta x                
+                data_current = data[:,step,:]
+                data_next = data[:,step+1,:]
+                dx = data_next - data_current                
+                u_average = (u[step](data_current) + u[step](data_next))/2
+                udx_over_D =  torch.matmul(u_average*dx, torch.from_numpy(self.D_inverse()).float().to(data.device))
+                udx = torch.sum(udx_over_D,axis=-1)
+                path_ent[:,step]= udx
+        return path_ent        
+
+    def path_dtlogf_step_nn(self, u, dlogf, data, params, step_begin, step_end):
+    # compute cumulant dissipation
+        path_ent = torch.zeros((len(data),step_end-step_begin))
+        with torch.no_grad():
+            for step in range(step_begin, step_end):
+                
+        # x, nextx and delta x                
+                data_current = data[:,step,:]
+                dtlogf = (-1*dlogf[step](data_current)*params['Dt']).flatten()
+                path_ent[:,step]= dtlogf
+        return path_ent
