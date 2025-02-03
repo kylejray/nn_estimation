@@ -1,0 +1,38 @@
+---
+base_directory: './testing_mpi/'
+
+simulation:
+  dt: .01
+  num_steps: 6
+  init: [0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]
+  kBT: [1, 2]
+  mob:  1
+  k: 1
+  coarse: 1
+  coarse_steps: [1,2,3]
+
+# Training options for the model
+training:
+  n_epoch: 1_500
+  epoch_s: 8_000
+  n_iter: 2
+  iter_s: 4_096 
+  n_infer: 1
+  infer_s: 2_000 
+  lr: .0001
+  wd: .00001  
+  patience: 5
+  min_delta: 0
+# Model options
+
+u_model:
+  n_input: 5
+  n_hidden: 32
+  n_output: 5
+  num_inner: 2
+
+dtlogf_model:
+  n_input: 5
+  n_hidden: 32
+  n_output: 1
+  num_inner: 2

@@ -5,11 +5,13 @@ import json
 import os
 import sys
 from datetime import datetime
+import shutil
 
-from argparse import Namespace
 from training import ModelTrainer, TrajectoryGenerator
 from models import SingleTimeStep
 
+from argparse import Namespace, ArgumentParser
+import yaml
 from experiments import force_infer, od_force_loss, od_dtlogf_loss, od_dxlogf_loss, od_sigmasq_dxlogf_loss, od_force_loss_2nd, od_entropy_loss_ML_2nd
 from experiments import entropy_loss_ML, entropy_infer_ML, od_entropy_loss_ML, od_entropy_infer_ML
 
@@ -23,68 +25,42 @@ comm = MPI.COMM_WORLD
 size = comm.Get_size()  # number of MPI prdocs
 rank = comm.Get_rank()  # i.d. for local proc
 
-#setting up base_dir and  synchronizing start time
-
-base_dir = './parallel_tests/'
+#setting up option variables on all ranks
+base_dir = ''
 start_time = datetime.now()
-if rank == 0:
-    start_time = datetime.now()
-    base_dir += f'{start_time:%m_%d_%H_%M%S}'
-    os.makedirs(base_dir, exist_ok=True)
-
-base_dir = comm.bcast(base_dir, root=0)
-start_time = comm.bcast(start_time, root=0)
-
-print(f'rank {rank}', base_dir, start_time)
-sys.stdout.flush()
-comm.barrier()
-# Simulation parameters
-
-keys = ['dt', 'num_steps', 'init', 'kBT', 'mob', 'k', 'coarse']
-vals = [.01, 6, np.array([0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]), [1, 2], 1, 1, 1 ]
-
-params = { k:v for k,v in zip(keys, vals)}
-# change the coarse step
-params["coarse_steps"] = [1,2,3]
-############################################
-
-
-# Training options for the model
-
+params = {}
 training_options = Namespace()
 u_model_options = Namespace()
-dtlogf_model_options = Namespace()
+dtlogf_model_options = Namespace ()
 
-training_options.n_epoch = 1_500
-training_options.epoch_s = 8_000
+#grab config from YAML on rank 0
+if rank == 0:
+    parser = ArgumentParser()
+    parser.add_argument('config_path', type=str, help='name of .yaml config')
+    config_file = parser.parse_args().config_path
 
-training_options.n_iter = 2
-training_options.iter_s = 4_096
+    start_time = datetime.now()
+    with open(config_file, "r") as f:
+        config = yaml.safe_load(f)
+    base_dir = config['base_directory']
+    base_dir += f'{start_time:%m_%d_%H_%M%S}'
+    os.makedirs(base_dir, exist_ok=True)
+    # Simulation parameters
+    params = config['simulation']
+    params['init'] = np.array(params['init'])
+    #training and model options
+    training_options = Namespace(**config['training'])
+    u_model_options = Namespace(**config['u_model'])
+    dtlogf_model_options = Namespace(**config['dtlogf_model'])
 
-training_options.n_infer = 1
-training_options.infer_s = 2_000
+#broadcast to other ranks
+base_dir = comm.bcast(base_dir, root=0)
+start_time = comm.bcast(start_time, root=0)
+params = comm.bcast(params, root=0)
+training_options = comm.bcast(training_options, root=0)
+u_model_options = comm.bcast(u_model_options, root=0)
+dtlogf_model_options = comm.bcast(dtlogf_model_options, root=0)
 
-training_options.lr = 1E-4
-training_options.wd = 5E-5
-
-training_options.patience = 5
-training_options.min_delta = 0
-
-#Earlystop
-training_options.patience = 5
-training_options.min_delta = 0
-
-
-# Model options
-u_model_options.n_input = 5
-u_model_options.n_hidden = 32
-u_model_options.n_output = 5
-u_model_options.num_inner = 2
-
-dtlogf_model_options.n_input = 5
-dtlogf_model_options.n_hidden = 32
-dtlogf_model_options.n_output = 1
-dtlogf_model_options.num_inner = 2
 
 # Optimizer
 optimizer = torch.optim.Adam
@@ -104,7 +80,6 @@ sys.stdout.flush()
 # convert numpy array to list for json serialization
 params['init'] = params['init'].tolist()
 
-
 # compute the theoretical cumsum of ep
 theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
 step_begin,step_end = 0, params['num_steps']-1
@@ -112,7 +87,7 @@ theo_path_diss_cum=theo_model.path_diss_path_theo_cum(total_data_validate.cpu().
 # save the theoretical cumsum of ep and data
 
 timestamp = int( 1_000*(datetime.now().timestamp() - start_time.timestamp()))
-directory = base_dir+f'/{timestamp}'
+directory = base_dir+f'/{timestamp}_rank{rank}'
 os.makedirs(directory, exist_ok=True)
 
 file_path = os.path.join(directory, "theo_path_diss_cum.npy")
@@ -168,16 +143,8 @@ for coarse_step in params["coarse_steps"]:
             index_dict[f'index{cname}'].append(item[1])
 
 # Save summary data
-if rank ==0:
-    nn_params = [{**vars(item)} for item in [training_options, u_model_options, dtlogf_model_options]]
-    nn_names = ['training', 'u_nn', 'dtlogf_nn']
-    all_parameters = {k:v for k,v in zip(nn_names,nn_params)}
-    all_parameters['sim'] = params
- 
-    filename = f"all_parameters.json"
-    file_path = os.path.join(base_dir, filename)
-    with open(file_path, 'w') as file:
-        json.dump(all_parameters, file, indent=4)
+if rank == 0:
+    shutil.copy(config_file, base_dir+'/config.yaml')
 
     filename = f"IDs.json"
     file_path = os.path.join(base_dir, filename)
