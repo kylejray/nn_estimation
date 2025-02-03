@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     params = { k:v for k,v in zip(keys, vals)}
     # change the coarse step
-    params["coarse_steps"] = [1,2,4,5]
+    params["coarse_steps"] = [1,2,3]
     ############################################    
     
 
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     # compute the theoretical cumsum of ep
     theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
     step_begin,step_end = 0, params['num_steps']-1
-    theo_path_diss_cum=theo_model.path_diss_path_theo_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
+    theo_path_diss_cum=theo_model.diss_path_theo_defi_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
     # save the theoretical cumsum of ep and data
     directory = f'results_{timestamp}'
     os.makedirs(directory, exist_ok=True)
@@ -199,9 +199,19 @@ if __name__ == "__main__":
         cg_step_begin = 0
         cg_step_end = cg_num_steps-1
 
-        nn_diss_path_step = theo_model.path_diss_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
-        nn_path_diss_cum = nn_diss_path_step.cumsum(axis=1)
-        nn_path_diss_cum_cpu = nn_path_diss_cum.cpu().numpy()
+        nn_diss_path_step_udx = theo_model.path_udx_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
+        nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
+
+        nn_path_udx_cum = nn_diss_path_step_udx.cumsum(axis=1)
+        nn_path_dtlogf_cum = nn_diss_path_step_dtlogf.cumsum(axis=1)
+
+        nn_path_udx_cum_cpu = nn_path_udx_cum.cpu().numpy()
+        nn_path_dtlogf_cum_cpu = nn_path_dtlogf_cum.cpu().numpy()
+
+        nn_path_diss_cum_cpu = np.empty ((*nn_diss_path_step_dtlogf.shape,2))
+        nn_path_diss_cum_cpu[...,0] = nn_path_udx_cum_cpu
+        nn_path_diss_cum_cpu[...,1] = nn_path_dtlogf_cum_cpu
+
         cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum_coarse_{coarse_step}.npy')
         np.save(cg_ep_file_path, nn_path_diss_cum_cpu)
         # Save data

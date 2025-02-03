@@ -43,7 +43,7 @@ if rank == 0:
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
     base_dir = config['base_directory']
-    base_dir += f'{start_time:%m_%d_%H_%M%S}'
+    base_dir += f'{start_time:%m_%d_%H_%M%S}/'
     os.makedirs(base_dir, exist_ok=True)
     # Simulation parameters
     params = config['simulation']
@@ -83,7 +83,7 @@ params['init'] = params['init'].tolist()
 # compute the theoretical cumsum of ep
 theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
 step_begin,step_end = 0, params['num_steps']-1
-theo_path_diss_cum=theo_model.path_diss_path_theo_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
+theo_path_diss_cum=theo_model.diss_path_theo_defi_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
 # save the theoretical cumsum of ep and data
 
 timestamp = int( 1_000*(datetime.now().timestamp() - start_time.timestamp()))
@@ -126,25 +126,41 @@ for coarse_step in params["coarse_steps"]:
     cg_step_begin = 0
     cg_step_end = cg_num_steps-1
     
-    nn_diss_path_step = theo_model.path_diss_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
-    nn_path_diss_cum = nn_diss_path_step.cumsum(axis=1)
-    nn_path_diss_cum_cpu = nn_path_diss_cum.cpu().numpy()
+    nn_diss_path_step_udx = theo_model.path_udx_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
+    nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
+    
+    nn_path_udx_cum = nn_diss_path_step_udx.cumsum(axis=1)
+    nn_path_dtlogf_cum = nn_diss_path_step_dtlogf.cumsum(axis=1)
+
+    nn_path_udx_cum_cpu = nn_path_udx_cum.cpu().numpy()
+    nn_path_dtlogf_cum_cpu = nn_path_dtlogf_cum.cpu().numpy()
+
+    nn_path_diss_cum_cpu = np.empty ((*nn_diss_path_step_dtlogf.shape,2))
+    nn_path_diss_cum_cpu[...,0] = nn_path_udx_cum_cpu
+    nn_path_diss_cum_cpu[...,1] = nn_path_dtlogf_cum_cpu
+
+    nn_final_diss_cum_cpu = nn_path_diss_cum_cpu[:,-1,:]
+
+    # Save data
     cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum{cname}.npy')
     np.save(cg_ep_file_path, nn_path_diss_cum_cpu)
-    # Save data
-    
+
     data_save(directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_num_steps, coarse_step)
 
     timestamps = comm.gather([timestamp, rank], root=0)
+
+    nn_final_diss_cum_cpu = comm.gather(nn_final_diss_cum_cpu, root=0)
 
     if rank ==0:
         for item in timestamps :
             index_dict[f'ID{cname}'].append(item[0])
             index_dict[f'index{cname}'].append(item[1])
+        nn_final_diss_path = base_dir + f'nn_final_diss_cum{cname}'
+        np.save(nn_final_diss_path, nn_final_diss_cum_cpu)
 
 # Save summary data
 if rank == 0:
-    shutil.copy(config_file, base_dir+'/config.yaml')
+    shutil.copy(config_file, base_dir+'config.yaml')
 
     filename = f"IDs.json"
     file_path = os.path.join(base_dir, filename)
