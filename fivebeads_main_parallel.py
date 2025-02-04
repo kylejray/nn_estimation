@@ -48,10 +48,12 @@ if rank == 0:
     # Simulation parameters
     params = config['simulation']
     params['init'] = np.array(params['init'])
-    #training and model options
+    # training and model options
     training_options = Namespace(**config['training'])
     u_model_options = Namespace(**config['u_model'])
     dtlogf_model_options = Namespace(**config['dtlogf_model'])
+    # save config
+    shutil.copy(config_file, base_dir+'config.yaml')
 
 #broadcast to other ranks
 base_dir = comm.bcast(base_dir, root=0)
@@ -74,7 +76,7 @@ if rank ==0:
 total_data_train= TrajectoryGenerator(simulate_five_spring_overdamped, params).batch(training_options.epoch_s)
 total_data_validate= TrajectoryGenerator(simulate_five_spring_overdamped, params).batch(training_options.infer_s)
 
-print(f'rank{rank} has data, making making models and class lists')
+print(f'rank {rank} has data, making theo model')
 sys.stdout.flush()
 
 # convert numpy array to list for json serialization
@@ -85,6 +87,9 @@ theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][
 step_begin,step_end = 0, params['num_steps']-1
 theo_path_diss_cum=theo_model.diss_path_theo_defi_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
 # save the theoretical cumsum of ep and data
+
+print(f'rank {rank} has theo, saving input data')
+sys.stdout.flush()
 
 timestamp = int( 1_000*(datetime.now().timestamp() - start_time.timestamp()))
 directory = base_dir+f'/{timestamp}_rank{rank}'
@@ -98,14 +103,16 @@ torch.save(total_data_validate, f'{directory}/data_validate.pt')
 
 if rank == 0:
     index_dict = {}
-    
+
+print(f'rank {rank} starting training')
+sys.stdout.flush()
+
 for coarse_step in params["coarse_steps"]:
     cname = f'_coarse_{coarse_step}'
     if rank == 0:
         index_dict.update({'ID'+cname:[],f'index'+cname:[]})
 
     params["Dt"] = params["dt"] * coarse_step
-    print(f'Coarse step {coarse_step}')
     # Set the data up
     cg_data_train = total_data_train[:,::coarse_step,:]
     cg_data_validate = total_data_validate[:,::coarse_step,:]
@@ -118,9 +125,6 @@ for coarse_step in params["coarse_steps"]:
     u_multisteps  = [ModelTrainer(WeightFunction_u_multisteps[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML, od_entropy_infer_ML, training_options) for i in range(cg_num_steps-1)]
     dtlogf_multisteps  = [ModelTrainer(WeightFunction_dtlogf_multisteps[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss, od_entropy_infer_ML, training_options) for i in range(cg_num_steps-1)]
     # Training step by step
-    print(f'rank{rank} starting training')
-    sys.stdout.flush()
-
     multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step)
     # Compute entropy production per trajectory and save
     cg_step_begin = 0
@@ -160,8 +164,6 @@ for coarse_step in params["coarse_steps"]:
 
 # Save summary data
 if rank == 0:
-    shutil.copy(config_file, base_dir+'config.yaml')
-
     filename = f"IDs.json"
     file_path = os.path.join(base_dir, filename)
     with open(file_path, 'w') as file:
