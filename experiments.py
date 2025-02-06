@@ -140,13 +140,13 @@ def get_od_currents(s, w, traj_generator):
 
     assert n_steps > 0, 'must have at least 1 time step'
 
-    w1 = w[:,:-1,:]
-    w2 = w[:,1:,:]
+    w1 = w[:,0,:]
+    w2 = w[:,1,:]
     w_avg = (w1+w2)/2
  
-    ds = s.diff(axis=1)
-    J = (w_avg * ds).sum(axis=2)
-    VJS = (1/2*w1**2*params['Dt']).sum(axis=2) #inner production 
+    ds = s[:,1,:]-s[:,0,:]
+    J = (w_avg * ds).sum(axis=1)
+    VJS = (1/2*w1**2*params['Dt']).sum(axis=1) #inner production 
     
     if n_steps > 1:
             J = J.sum(axis=1)
@@ -304,3 +304,27 @@ def od_entropy_loss_ML_2nd(s, w, traj_generator):
     loss=VJS.mean(axis=0)-J.mean(axis=0)
 
     return loss
+
+def od_dtlogf_loss_2nd(s, w, traj_generator):
+    '''
+    
+    s : trajectories tensors with dims [N_traj , steps , coords_values = (x1,x2,..,xn) ]
+    w : weights function with dims [N_traj , steps , coords_values = (w1,w2,..,wn) ]
+    
+    '''
+    params = traj_generator.params
+    #trims off the time vector, if there was one 
+    #if s.shape[-1]%2 == 1 and s.shape[-1] > 1:
+    #    s = s[...,:-1]
+    
+    #n_dim = int(s.shape[-1])
+    n_steps = s.shape[1] - 1
+
+    #we dont really care about time-averaged force; so this makes sure it's only for one time step
+    assert n_steps == 2, 'trajs must have exactly 2 time steps'
+
+    dw = -1/2*w[:,2,:]+2*w[:,1,:]-3/2*w[:,0,:]  
+    w1 = w[:,0,:]
+    ### axis=1 is the inner product
+    loss = -((dw).sum(axis=1)).mean(axis=0) + ((.5*(w1**2).sum(axis=1))*params['Dt']).mean(axis=0)
+    return loss 

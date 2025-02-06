@@ -9,7 +9,7 @@ from argparse import Namespace
 from training import ModelTrainer, TrajectoryGenerator
 from models import SingleTimeStep
 
-from experiments import force_infer, od_force_loss, od_dtlogf_loss, od_dxlogf_loss, od_sigmasq_dxlogf_loss, od_force_loss_2nd, od_entropy_loss_ML_2nd
+from experiments import force_infer, od_force_loss, od_dtlogf_loss, od_dxlogf_loss, od_sigmasq_dxlogf_loss, od_force_loss_2nd, od_entropy_loss_ML_2nd, od_dtlogf_loss_2nd
 from experiments import entropy_loss_ML, entropy_infer_ML, od_entropy_loss_ML, od_entropy_infer_ML
 
 import fivebeads
@@ -20,19 +20,19 @@ from fivebeads import simulate_five_spring_overdamped, five_beads
 
 ############################################
 
-def multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step):
+def multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order):
     for step in range(len(u_multisteps)):
 
     # Setting up training data and validation data
         Fivebeads_multisteps[step].infinite_data = False
-        Fivebeads_multisteps[step].data = cg_data_train[:,step:step+2,:]
-        u_multisteps[step].validation_data = cg_data_validate[:,step:step+2,:]
-        dtlogf_multisteps[step].validation_data = cg_data_validate[:,step:step+2,:] 
+        Fivebeads_multisteps[step].data = cg_data_train[:,step:step+order+1,:]
+        u_multisteps[step].validation_data = cg_data_validate[:,step:step+order+1,:]
+        dtlogf_multisteps[step].validation_data = cg_data_validate[:,step:step+order+1,:] 
         #print(hasattr(EntProd_ML_multisteps[step], 'validation_data'))  # Check if 'data' exists
      # Training
-        print(f'Training u step {step} using coarse step {coarse_step}')
+        print(f'Training u step {step} using coarse step {coarse_step} and loss order {order}')
         u_multisteps[step].train()
-        print(f'Training dtlogf step {step} using coarse step {coarse_step}')
+        print(f'Training dtlogf step {step} using coarse step {coarse_step} and loss order {order}')
         dtlogf_multisteps[step].train()
         ##Reset parameter every 10 steps
         #if (step+1)%10 !=0:
@@ -49,7 +49,7 @@ def data_save(directory, params, u_multisteps, dtlogf_multisteps, WeightFunction
     u_validation_loss=[]
     dtlogf_validation_loss=[]
 
-    for step in range(cg_num_steps-1):
+    for step in range(cg_num_steps):
         u_training_loss.append(u_multisteps[step].all_loss)
         dtlogf_training_loss.append(dtlogf_multisteps[step].all_loss)
         u_validation_loss.append(u_multisteps[step].epoch_validation_loss)
@@ -98,11 +98,14 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam
     # Simulation parameters
     keys = ['dt', 'num_steps', 'init', 'kBT', 'mob', 'k', 'coarse']
-    vals = [.01, 6, np.array([0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]), [1, 2], 1, 1, 1 ] 
+    vals = [.01, 60, np.array([0.56,-0.23,0.14,-0.12,0.09,0.87,-0.15,0.08,-0.19,0.92,-0.21,0.11,0.68,-0.17,0.79]), [1, 2], 1, 1, 1 ] 
 
     params = { k:v for k,v in zip(keys, vals)}
     # change the coarse step
-    params["coarse_steps"] = [1,2,3]
+    params["path_length"] = 60
+    params["coarse_steps"] = [1,2,12,15]
+    params["num_steps"] = params["path_length"] + params["coarse_steps"][-1] + 1 
+    
     ############################################    
     
 
@@ -113,13 +116,13 @@ if __name__ == "__main__":
     dtlogf_model_options = Namespace()  
 
     training_options.n_epoch = 1_500
-    training_options.epoch_s = 8_000    
+    training_options.epoch_s = 80_000    
 
-    training_options.n_iter = 2
+    training_options.n_iter = 20
     training_options.iter_s = 4_096 
 
     training_options.n_infer = 1
-    training_options.infer_s = 2_000    
+    training_options.infer_s = 20_000    
 
     training_options.lr = 1E-4
     training_options.wd = 5E-5  
@@ -153,7 +156,7 @@ if __name__ == "__main__":
 
     # compute the theoretical cumsum of ep
     theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
-    step_begin,step_end = 0, params['num_steps']-1
+    step_begin,step_end = 0, params['path_length']
     theo_path_diss_cum=theo_model.diss_path_theo_defi_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
     # save the theoretical cumsum of ep and data
     directory = f'results_{timestamp}'
@@ -185,19 +188,27 @@ if __name__ == "__main__":
         # Set the data up
         cg_data_train = total_data_train[:,::coarse_step,:]
         cg_data_validate = total_data_validate[:,::coarse_step,:]
-        cg_num_steps = cg_data_train.shape[1]
-        # model generation
-        WeightFunction_u_multisteps = [SingleTimeStep(u_model_options) for _ in range(cg_num_steps-1)]
-        WeightFunction_dtlogf_multisteps = [SingleTimeStep(dtlogf_model_options) for _ in range(cg_num_steps-1)]
+        # cg_num_steps is the number of nns needed
+        cg_num_steps = params["path_length"]//coarse_step 
+        # model generation: we need  #nn = #cg_num_steps 
+        WeightFunction_u_multisteps = [SingleTimeStep(u_model_options) for _ in range(cg_num_steps)]
+        WeightFunction_dtlogf_multisteps = [SingleTimeStep(dtlogf_model_options) for _ in range(cg_num_steps)]
+
+        WeightFunction_u_multisteps_2nd = [SingleTimeStep(u_model_options) for _ in range(cg_num_steps)]
+        WeightFunction_dtlogf_multisteps_2nd = [SingleTimeStep(dtlogf_model_options) for _ in range(cg_num_steps)]
         # Train part initialization
-        Fivebeads_multisteps = [TrajectoryGenerator(simulate_five_spring_overdamped, params) for _ in range(cg_num_steps-1)]
-        u_multisteps  = [ModelTrainer(WeightFunction_u_multisteps[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML, od_entropy_infer_ML, training_options) for i in range(cg_num_steps-1)]
-        dtlogf_multisteps  = [ModelTrainer(WeightFunction_dtlogf_multisteps[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss, od_entropy_infer_ML, training_options) for i in range(cg_num_steps-1)]
+        Fivebeads_multisteps = [TrajectoryGenerator(simulate_five_spring_overdamped, params) for _ in range(cg_num_steps)]
+        u_multisteps  = [ModelTrainer(WeightFunction_u_multisteps[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
+        dtlogf_multisteps  = [ModelTrainer(WeightFunction_dtlogf_multisteps[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
+
+        u_multisteps_2nd  = [ModelTrainer(WeightFunction_u_multisteps_2nd[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML_2nd, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
+        dtlogf_multisteps_2nd  = [ModelTrainer(WeightFunction_dtlogf_multisteps_2nd[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss_2nd, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
         # Training step by step
-        multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step)
+        multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=1)
+        multistep_train(u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=2)
         # Compute entropy production per trajectory and save
         cg_step_begin = 0
-        cg_step_end = cg_num_steps-1
+        cg_step_end = cg_num_steps
 
         nn_diss_path_step_udx = theo_model.path_udx_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
         nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
@@ -211,8 +222,30 @@ if __name__ == "__main__":
         nn_path_diss_cum_cpu = np.empty ((*nn_diss_path_step_dtlogf.shape,2))
         nn_path_diss_cum_cpu[...,0] = nn_path_udx_cum_cpu
         nn_path_diss_cum_cpu[...,1] = nn_path_dtlogf_cum_cpu
+        # 2nd order
+        nn_diss_path_step_udx_2nd = theo_model.path_udx_step_nn( WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_data_validate, params, cg_step_begin, cg_step_end)
+        nn_diss_path_step_dtlogf_2nd = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_data_validate, params, cg_step_begin, cg_step_end)
 
-        cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum_coarse_{coarse_step}.npy')
+        nn_path_udx_cum_2nd = nn_diss_path_step_udx_2nd.cumsum(axis=1)
+        nn_path_dtlogf_cum_2nd = nn_diss_path_step_dtlogf_2nd.cumsum(axis=1)
+
+        nn_path_udx_cum_cpu_2nd = nn_path_udx_cum_2nd.cpu().numpy()
+        nn_path_dtlogf_cum_cpu_2nd = nn_path_dtlogf_cum_2nd.cpu().numpy()
+
+        nn_path_diss_cum_cpu_2nd = np.empty ((*nn_diss_path_step_dtlogf_2nd.shape,2))
+        nn_path_diss_cum_cpu_2nd[...,0] = nn_path_udx_cum_cpu_2nd
+        nn_path_diss_cum_cpu_2nd[...,1] = nn_path_dtlogf_cum_cpu_2nd
+
+        cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum_coarse_{coarse_step}_1st.npy')
         np.save(cg_ep_file_path, nn_path_diss_cum_cpu)
+
+        cg_ep_2nd_file_path = os.path.join(directory, f'nn_path_diss_cum_coarse_{coarse_step}_2nd.npy')
+        np.save(cg_ep_2nd_file_path, nn_path_diss_cum_cpu_2nd)
         # Save data
-        data_save(directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_num_steps, coarse_step)
+        first_order_directory = directory + f'/1storder'
+        os.makedirs(first_order_directory, exist_ok=True)
+        data_save(first_order_directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_num_steps, coarse_step)
+        
+        second_order_directory = directory + f'/2ndorder'
+        os.makedirs(second_order_directory, exist_ok=True)
+        data_save(second_order_directory, params, u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_num_steps, coarse_step)
