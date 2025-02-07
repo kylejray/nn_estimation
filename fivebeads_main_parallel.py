@@ -137,10 +137,10 @@ for coarse_step in params["coarse_steps"]:
     multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=1)
     multistep_train(u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=2)
 
-    # Compute entropy production per trajectory and save
+    # Compute entropy production per trajectory
     cg_step_begin = 0
     cg_step_end = cg_num_steps
-    
+    #first order
     nn_diss_path_step_udx = theo_model.path_udx_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
     nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end)
     
@@ -151,11 +151,11 @@ for coarse_step in params["coarse_steps"]:
     nn_path_dtlogf_cum_cpu = nn_path_dtlogf_cum.cpu().numpy()
 
     nn_path_diss_cum_cpu = np.empty ((*nn_diss_path_step_dtlogf.shape,2))
+
     nn_path_diss_cum_cpu[...,0] = nn_path_udx_cum_cpu
     nn_path_diss_cum_cpu[...,1] = nn_path_dtlogf_cum_cpu
 
-    nn_final_diss_cum_cpu = nn_path_diss_cum_cpu[:,-1,:]
-
+    #second order
     nn_diss_path_step_udx_2nd = theo_model.path_udx_step_nn( WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_data_validate, params, cg_step_begin, cg_step_end)
     nn_diss_path_step_dtlogf_2nd = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_data_validate, params, cg_step_begin, cg_step_end)
 
@@ -169,7 +169,10 @@ for coarse_step in params["coarse_steps"]:
     nn_path_diss_cum_cpu_2nd[...,0] = nn_path_udx_cum_cpu_2nd
     nn_path_diss_cum_cpu_2nd[...,1] = nn_path_dtlogf_cum_cpu_2nd
 
+    # summary final data
+    nn_final_diss_cum_cpu = nn_path_diss_cum_cpu[:,-1,:]
     nn_final_diss_cum_cpu_2nd = nn_path_diss_cum_cpu_2nd[:,-1,:]
+    theo_final_diss_cum = theo_path_diss_cum[:,-1]
 
 
     # Save data
@@ -190,13 +193,17 @@ for coarse_step in params["coarse_steps"]:
     timestamps = comm.gather([timestamp, rank], root=0)
 
     nn_final_diss_cum_cpu = comm.gather(nn_final_diss_cum_cpu, root=0)
+    nn_final_diss_cum_cpu_2nd = comm.gather(nn_final_diss_cum_cpu_2nd, root=0)
+    theo_final_diss_cum = comm.gather(theo_final_diss_cum, root=0)
 
     if rank ==0:
         for item in timestamps :
             index_dict[f'ID{cname}'].append(item[0])
             index_dict[f'index{cname}'].append(item[1])
+        
         nn_final_diss_path = base_dir + f'nn_final_diss_cum{cname}'
-        np.save(nn_final_diss_path, nn_final_diss_cum_cpu)
+        np.savez(nn_final_diss_path, first_order = nn_final_diss_cum_cpu, second_order = nn_final_diss_cum_cpu_2nd)
+        np.save(base_dir + f'theo_final_diss', theo_final_diss_cum)
 
 # Save summary data
 if rank == 0:
