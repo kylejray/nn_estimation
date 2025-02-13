@@ -1,8 +1,17 @@
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+size = comm.Get_size()  # number of MPI prdocs
+rank = comm.Get_rank()  # i.d. for local proc
+
+import os
+if rank != 0:
+    os.environ["TQDM_DISABLE"] = 'True'
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import json
-import os
 import sys
 from datetime import datetime
 import shutil
@@ -21,9 +30,8 @@ from fivebeads import simulate_five_spring_overdamped, five_beads
 from fivebeads_main import multistep_train, data_save, r2_score
 from mpi4py import MPI
 
-comm = MPI.COMM_WORLD
-size = comm.Get_size()  # number of MPI prdocs
-rank = comm.Get_rank()  # i.d. for local proc
+import contextlib
+import io
 
 #setting up option variables on all ranks
 base_dir = ''
@@ -87,6 +95,10 @@ params['init'] = params['init'].tolist()
 theo_model = fivebeads.five_beads(params['init'], 2 * np.linspace(params['kBT'][0], params['kBT'][1], 5))
 step_begin,step_end = 0, params['path_length']
 theo_path_diss_cum=theo_model.diss_path_theo_defi_cum(total_data_validate.cpu().numpy(), step_begin, step_end)
+theo_final_diss_cum = theo_path_diss_cum[:,-1]
+
+
+
 # save the theoretical cumsum of ep and data
 
 print(f'rank {rank} has theo, saving input data')
@@ -96,20 +108,35 @@ timestamp = int( 1_000*(datetime.now().timestamp() - start_time.timestamp()))
 directory = base_dir+f'/{timestamp}_rank{rank}'
 os.makedirs(directory, exist_ok=True)
 
+
 file_path = os.path.join(directory, "theo_path_diss_cum.npy")
 np.save(file_path, theo_path_diss_cum)
+
 # save the data
-torch.save(total_data_train, f'{directory}/data_train.pt')
-torch.save(total_data_validate, f'{directory}/data_validate.pt')
+
+theo_final_diss_cum = comm.gather(theo_final_diss_cum, root=0)
+if rank == 0:
+    np.save(base_dir + f'theo_final_diss', theo_final_diss_cum)
+
+train_dir = f'{directory}/data_train.pt'
+validate_dir = f'{directory}/data_validate.pt'
+torch.save(total_data_train, train_dir)
+torch.save(total_data_validate, validate_dir)
+
+#cleanup memory
+theo_final_diss_cum = None
+theo_path_diss_cum = None
+
 
 if rank == 0:
     index_dict = {}
 
-print(f'rank {rank} starting training')
-sys.stdout.flush()
+
 
 for coarse_step in params["coarse_steps"]:
-    cname = f'_coarse_{coarse_step}'
+    print(f'rank {rank} initializing training for coarse = {coarse_step}')
+    sys.stdout.flush()
+    cname = f'_coarse_{coarse_step:02}'
     if rank == 0:
         index_dict.update({'ID'+cname:[],f'index'+cname:[]})
 
@@ -128,14 +155,26 @@ for coarse_step in params["coarse_steps"]:
     WeightFunction_dtlogf_multisteps_2nd = [SingleTimeStep(dtlogf_model_options) for _ in range(cg_num_steps)]
     # Train part initialization
     Fivebeads_multisteps = [TrajectoryGenerator(simulate_five_spring_overdamped, params) for _ in range(cg_num_steps)]
+
     u_multisteps  = [ModelTrainer(WeightFunction_u_multisteps[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
     dtlogf_multisteps  = [ModelTrainer(WeightFunction_dtlogf_multisteps[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
 
     u_multisteps_2nd  = [ModelTrainer(WeightFunction_u_multisteps_2nd[i], Fivebeads_multisteps[i], optimizer, od_entropy_loss_ML_2nd, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
     dtlogf_multisteps_2nd  = [ModelTrainer(WeightFunction_dtlogf_multisteps_2nd[i], Fivebeads_multisteps[i], optimizer, od_dtlogf_loss_2nd, od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
     # Training step by step
-    multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=1)
-    multistep_train(u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=2)
+
+    print(f'rank {rank} starting training for coarse = {coarse_step}')
+    sys.stdout.flush()
+
+    if rank != 0:
+        with contextlib.redirect_stdout(io.StringIO()):
+            multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=1)
+            multistep_train(u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=2)
+    else:
+        multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=1)
+        multistep_train(u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=2)
+
+    print(f'rank {rank} done with training coarse = {coarse_step}, calculating EP', flush=True)
 
     # Compute entropy production per trajectory
     cg_step_begin = 0
@@ -172,8 +211,8 @@ for coarse_step in params["coarse_steps"]:
     # summary final data
     nn_final_diss_cum_cpu = nn_path_diss_cum_cpu[:,-1,:]
     nn_final_diss_cum_cpu_2nd = nn_path_diss_cum_cpu_2nd[:,-1,:]
-    theo_final_diss_cum = theo_path_diss_cum[:,-1]
 
+    print(f'rank {rank} done with calculating EP, saving EP', flush=True)
 
     # Save data
     cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum{cname}_1st.npy')
@@ -182,6 +221,7 @@ for coarse_step in params["coarse_steps"]:
     cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum{cname}_2nd.npy')
     np.save(cg_ep_file_path, nn_path_diss_cum_cpu_2nd)
 
+    print(f'rank {rank} done with saving EP, saving models', flush=True)
     first_order_directory = directory + f'/1storder'
     os.makedirs(first_order_directory, exist_ok=True)
     data_save(first_order_directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_num_steps, coarse_step)
@@ -190,11 +230,11 @@ for coarse_step in params["coarse_steps"]:
     os.makedirs(second_order_directory, exist_ok=True)
     data_save(second_order_directory, params, u_multisteps_2nd, dtlogf_multisteps_2nd, WeightFunction_u_multisteps_2nd, WeightFunction_dtlogf_multisteps_2nd, cg_num_steps, coarse_step)
 
+    print(f'rank {rank} entering gather', flush=True)
     timestamps = comm.gather([timestamp, rank], root=0)
-
     nn_final_diss_cum_cpu = comm.gather(nn_final_diss_cum_cpu, root=0)
     nn_final_diss_cum_cpu_2nd = comm.gather(nn_final_diss_cum_cpu_2nd, root=0)
-    theo_final_diss_cum = comm.gather(theo_final_diss_cum, root=0)
+    
 
     if rank ==0:
         for item in timestamps :
@@ -203,7 +243,18 @@ for coarse_step in params["coarse_steps"]:
         
         nn_final_diss_path = base_dir + f'nn_final_diss_cum{cname}'
         np.savez(nn_final_diss_path, first_order = nn_final_diss_cum_cpu, second_order = nn_final_diss_cum_cpu_2nd)
-        np.save(base_dir + f'theo_final_diss', theo_final_diss_cum)
+
+    print(f'rank {rank} done with saving, cleaning up', flush=True)
+    #memory cleanup
+    nn_final_diss_cum_cpu = None
+    nn_final_diss_cum_cpu_2nd = None
+    nn_path_diss_cum_cpu = None
+    nn_path_diss_cum_cpu_2nd = None
+    nn_path_dtlogf_cum_cpu = None
+    nn_path_dtlogf_cum_cpu_2nd = None
+    nn_path_udx_cum_cpu = None
+    nn_path_udx_cum_cpu_2nd = None
+
 
 # Save summary data
 if rank == 0:
@@ -211,8 +262,6 @@ if rank == 0:
     file_path = os.path.join(base_dir, filename)
     with open(file_path, 'w') as file:
             json.dump(index_dict, file, indent=4)
-
-
 
     
     

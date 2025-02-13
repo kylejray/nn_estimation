@@ -21,8 +21,9 @@ from fivebeads import simulate_five_spring_overdamped, five_beads
 ############################################
 
 def multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order):
+    p = -15
     for step in range(len(u_multisteps)):
-
+        p_new = round(100*step/len(u_multisteps))
     # Setting up training data and validation data
         Fivebeads_multisteps[step].infinite_data = False
         Fivebeads_multisteps[step].data = cg_data_train[:,step:step+order+1,:]
@@ -30,9 +31,10 @@ def multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps
         dtlogf_multisteps[step].validation_data = cg_data_validate[:,step:step+order+1,:] 
         #print(hasattr(EntProd_ML_multisteps[step], 'validation_data'))  # Check if 'data' exists
      # Training
-        print(f'Training u step {step} using coarse step {coarse_step} and loss order {order}')
+        if p_new >= p + 15:
+            print(f'Training step {step} using coarse step {coarse_step} and loss order {order}')
+            p = p_new
         u_multisteps[step].train()
-        print(f'Training dtlogf step {step} using coarse step {coarse_step} and loss order {order}')
         dtlogf_multisteps[step].train()
         ##Reset parameter every 10 steps
         #if (step+1)%10 !=0:
