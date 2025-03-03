@@ -29,7 +29,7 @@ from experiments import entropy_loss_ML, entropy_infer_ML, od_entropy_loss_ML, o
 import fivebeads
 
 from fivebeads import simulate_five_spring_overdamped, five_beads
-from fivebeads_main import multistep_train, data_save, r2_score
+from fivebeads_main_kyle import multistep_train, r2_score
 from mpi4py import MPI
 
 import contextlib
@@ -44,6 +44,7 @@ training_options = Namespace()
 u_model_options = Namespace()
 dtlogf_model_options = Namespace ()
 
+dynamics = simulate_five_spring_overdamped
 #grab config from YAML on rank 0
 if rank == 0:
     parser = ArgumentParser()
@@ -71,9 +72,11 @@ if rank == 0:
 base_dir = comm.bcast(base_dir, root=0)
 start_time = comm.bcast(start_time, root=0)
 params = comm.bcast(params, root=0)
+
 training_options = comm.bcast(training_options, root=0)
 u_model_options = comm.bcast(u_model_options, root=0)
 dtlogf_model_options = comm.bcast(dtlogf_model_options, root=0)
+options_list = [u_model_options, dtlogf_model_options, training_options]
 
 
 # Optimizer
@@ -155,29 +158,29 @@ for coarse_step in params["coarse_steps"]:
     for loss_order, loss, order_string in zip([1,2],[loss_1st,loss_2nd],['1st','2nd']):
         gc.collect()
         torch.mps.empty_cache()
-        #print(f'rank{rank}:{torch.mps.current_allocated_memory()/2**30:.3f}GB, {torch.mps.driver_allocated_memory()/2**30:.3f}GB', flush=True)
-        WeightFunction_u_multisteps = [SingleTimeStep(u_model_options) for _ in range(cg_num_steps)]
-        WeightFunction_dtlogf_multisteps = [SingleTimeStep(dtlogf_model_options) for _ in range(cg_num_steps)]
-        # Train part initialization
-        Fivebeads_multisteps = [TrajectoryGenerator(simulate_five_spring_overdamped, params) for _ in range(cg_num_steps)]
-        u_multisteps  = [ModelTrainer(WeightFunction_u_multisteps[i], Fivebeads_multisteps[i], optimizer, loss[0], od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
-        dtlogf_multisteps  = [ModelTrainer(WeightFunction_dtlogf_multisteps[i], Fivebeads_multisteps[i], optimizer, loss[1], od_entropy_infer_ML, training_options) for i in range(cg_num_steps)]
+
+        order_directory = directory + f'/{order_string}order'
+        os.makedirs(order_directory, exist_ok=True)
+
+        #print(torch.cuda.memory_summary())
+        print(f'rank{rank}:{torch.mps.current_allocated_memory()/2**30:.3f}GB, {torch.mps.driver_allocated_memory()/2**30:.3f}GB', flush=True)
+ 
         # Training step by step
         print(f'rank {rank} starting training for coarse = {coarse_step}, order={loss_order}', flush=True)
         if rank != 0:
             with contextlib.redirect_stdout(io.StringIO()):
-                multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=loss_order)
+                trained_networks = multistep_train(options_list, optimizer, loss[0], loss[1], od_entropy_infer_ML, dynamics, params, cg_num_steps, cg_data_train, cg_data_validate, coarse_step, order_directory, order=loss_order)
         else:
-            multistep_train(u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, Fivebeads_multisteps, cg_data_train, cg_data_validate, coarse_step, order=loss_order)
+            trained_networks = multistep_train(options_list, optimizer, loss[0], loss[1], od_entropy_infer_ML, dynamics, params, cg_num_steps, cg_data_train, cg_data_validate, coarse_step, order_directory, order=loss_order)
 
-        print(f'rank {rank} done with training coarse = {coarse_step}, order={loss_order}; calculating EP', flush=True)
+        print(f'rank {rank} done with training and saving coarse = {coarse_step}, order={loss_order}; calculating EP', flush=True)
 
         # Compute entropy production per trajectory
         cg_step_begin = 0
         cg_step_end = cg_num_steps
     
-        nn_diss_path_step_udx = theo_model.path_udx_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end).detach()
-        nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_data_validate, params, cg_step_begin, cg_step_end).detach()
+        nn_diss_path_step_udx = theo_model.path_udx_step_nn( *trained_networks, cg_data_validate, params, cg_step_begin, cg_step_end).detach()
+        nn_diss_path_step_dtlogf = theo_model.path_dtlogf_step_nn( *trained_networks, cg_data_validate, params, cg_step_begin, cg_step_end).detach()
 
         nn_path_udx_cum = nn_diss_path_step_udx.cumsum(axis=1)
         nn_path_dtlogf_cum = nn_diss_path_step_dtlogf.cumsum(axis=1)
@@ -193,12 +196,6 @@ for coarse_step in params["coarse_steps"]:
                 # Save data
         cg_ep_file_path = os.path.join(directory, f'nn_path_diss_cum{cname}_{order_string}.npy')
         np.save(cg_ep_file_path, nn_path_diss_cum_cpu)
-
-        order_directory = directory + f'/{order_string}order'
-        os.makedirs(order_directory, exist_ok=True)
-        data_save(order_directory, params, u_multisteps, dtlogf_multisteps, WeightFunction_u_multisteps, WeightFunction_dtlogf_multisteps, cg_num_steps, coarse_step)
-
-
 
         # summary final data
         if loss_order == 1:
