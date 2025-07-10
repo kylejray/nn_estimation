@@ -1,0 +1,23 @@
+{
+    "font.size": 16,
+    "font.family": "serif",
+    "text.usetex": true,
+    "axes.labelsize": 16,
+    "axes.titlesize": 16,
+    "xtick.labelsize": 16,
+    "ytick.labelsize": 16,
+    "legend.fontsize": 16,
+    "legend.loc": "upper right",
+    "legend.labelspacing": 0.2,
+    "figure.figsize": [8, 3],
+    "lines.linewidth": 2,
+    "lines.markersize": 8,
+    "axes.grid": false,
+    "grid.linestyle": "--",
+    "grid.color": "gray",
+    "grid.alpha": 0.5,
+    "axes.spines.top": true,
+    "axes.spines.right": true,
+    "savefig.dpi": 300
+
+}
